@@ -25,7 +25,7 @@ def ingest_pdf(file_path: str):
     print(f"Total chunks: {len(chunks)}")
  
     # 4. create vector
-    create_vector_store("Intelligent_Credit_Risk_Assessment", pre_delete_collection=True)
+    create_vector_store("hr_support_desk", pre_delete_collection=True)
     
     # 5. store embeddings in vector db
     store_vector(chunks)
