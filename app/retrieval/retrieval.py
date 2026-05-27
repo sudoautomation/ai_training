@@ -5,7 +5,7 @@ from dotenv import load_dotenv
 import psycopg
 from psycopg.rows import dict_row
 
-from app.core.db import get_vector_store
+from app.core.vector_store import create_vector_store
 
 load_dotenv()
 
@@ -57,7 +57,7 @@ def query_documents(query: str, k: int = 5) -> list[dict]:
         return _hybrid_search(query, k=k)
 
     # vector search
-    vector_store = get_vector_store()
+    vector_store = create_vector_store()
     docs = vector_store.similarity_search(query, k=k)
 
     return [
@@ -119,7 +119,7 @@ def fts_search(
 # -----------------------------
 def _hybrid_search(query: str, k: int = 5) -> list[dict]:
 
-    vector_store = get_vector_store()
+    vector_store = create_vector_store()
 
     vector_docs = vector_store.similarity_search(query, k=k)
     fts_docs = fts_search(query, k=k)
@@ -158,7 +158,7 @@ def _hybrid_search(query: str, k: int = 5) -> list[dict]:
 # TEST
 # -----------------------------
 if __name__ == "__main__":
-    query = "what is the leave policy for employees?"
+    query = "calculation for dti ratio?"
     results = query_documents(query, k=5)
 
     print(f"\nTop {len(results)} results:\n{'=' * 60}")
