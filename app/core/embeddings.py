@@ -7,21 +7,11 @@ from langchain_google_genai import GoogleGenerativeAIEmbeddings
 
 
 def get_embedding_model_name() -> str:
-    model = os.getenv("GEMINI_EMBEDDINGS_MODEL")
-    if not model:
-        raise RuntimeError(
-            "GEMINI_EMBEDDINGS_MODEL is not set. Add it to .env or export it in your environment."
-        )
-    return model
+    return os.getenv("GOOGLE_EMBEDDINGS_MODEL")
 
 
 def get_gemini_api_key() -> str:
-    api_key = os.getenv("GOOGLE_API_KEY")
-    if not api_key:
-        raise RuntimeError(
-            "GOOGLE_API_KEY is not set. Add it to .env or export it in your environment."
-        )
-    return api_key
+    return os.getenv("GEMINI_API_KEY")
 
 
 # =========================
