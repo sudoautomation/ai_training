@@ -25,7 +25,7 @@ def ingest_pdf(file_path: str):
     print(f"Total chunks: {len(chunks)}")
  
     # 4. create vector
-    create_vector_store("hr_support_desk")
+    create_vector_store("Intelligent_Credit_Risk_Assessment", pre_delete_collection=True)
     
     # 5. store embeddings in vector db
     store_vector(chunks)
@@ -36,7 +36,8 @@ def ingest_pdf(file_path: str):
 if __name__ == "__main__":
 
     ingest_pdf(
-        # "data/Capstone_Project_3_Intelligent_Credit_Risk_Assessment_FAQ.pdf"
-        "data\HR_Support_Desk_KnowledgeBase.pdf"
+        "data/Capstone_Project_3_Intelligent_Credit_Risk_Assessment_FAQ.pdf"
+        # "data\HR_Support_Desk_KnowledgeBase.pdf"
     )
 # "data\HR_Support_Desk_KnowledgeBase.pdf"
+# $env:PYTHONPATH="."; uv run app/ingestion/ingestion.py
