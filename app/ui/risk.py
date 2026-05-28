@@ -11,7 +11,7 @@ def render_risk(risk):
     )
 
     c2.metric(
-        "Level",
+        "Threat Level",
         risk["risk_level"]
     )
 
