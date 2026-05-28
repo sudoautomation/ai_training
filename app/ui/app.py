@@ -3,7 +3,6 @@ import streamlit as st
 from sidebar import (
     render_sidebar
 )
-
 from chat import (
     render_chat
 )

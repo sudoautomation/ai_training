@@ -53,4 +53,7 @@ def render_sidebar():
                 profile
             )
 
-            st.rerun()
+
+            st.toast(
+                "✅ Profile saved successfully!"
+            )
