@@ -126,7 +126,7 @@ def fts_search(
             "content": row["content"],
             "metadata": row["metadata"],
             "fts_rank": round(float(row["fts_rank"]), 4),
-        )
+        }
         for row in rows
     ]
 
