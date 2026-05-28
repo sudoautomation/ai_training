@@ -26,6 +26,8 @@ Guidelines:
 5. Never fabricate policy numbers or thresholds not found in tool results.
 6. Do not mention file names, page numbers, or source references in your final answer.
 7. Keep your final answer concise, clear, and professional.
+8. When calling search_policy, pass only the search query string.
+   Never pass borrower profile data to search_policy.
 
 If asked who you are, respond only with:
 I am a loan policy assistant. I can help you with loan-related queries.
@@ -54,7 +56,6 @@ def generate_answer(question: str, profile: dict | None) -> tuple[str, list, dic
         A tuple of (answer, docs, dti, risk) for use in the loan_agent response.
     """
 
-    # Build the initial user message including profile if present
     user_message = _build_user_message(question, profile)
 
     messages = [
@@ -62,7 +63,6 @@ def generate_answer(question: str, profile: dict | None) -> tuple[str, list, dic
         {"role": "user", "content": user_message},
     ]
 
-    # Accumulated outputs from tool calls for citation and response building
     collected_docs = []
     collected_dti = {}
     collected_risk = {}
@@ -78,7 +78,7 @@ def generate_answer(question: str, profile: dict | None) -> tuple[str, list, dic
 
         # If the model returned a plain text answer the loop is done
         if not _has_tool_calls(response):
-            return response.content, collected_docs, collected_dti, collected_risk
+            return _extract_text(response.content), collected_docs, collected_dti, collected_risk
 
         # Process each tool call the model requested
         tool_results = []
@@ -99,9 +99,7 @@ def generate_answer(question: str, profile: dict | None) -> tuple[str, list, dic
             if tool_name == "evaluate_risk":
                 collected_risk = result
 
-            # Prepare result to send back to the model
-            # We strip raw docs from the context since they are large and only
-            # the text context string is useful for the model to reason over
+            # Strip raw docs before sending back to model since they are large
             tool_result_for_model = {k: v for k, v in result.items() if k != "docs"}
 
             tool_results.append({
@@ -121,12 +119,15 @@ def generate_answer(question: str, profile: dict | None) -> tuple[str, list, dic
 
 def _build_user_message(question: str, profile: dict | None) -> str:
     """
-    Construct the user message text. If a borrower profile is present,
-    include it so the model can extract values for tool arguments.
+    Construct the user message text.
+    Profile is included only as context for calculate_dti and evaluate_risk.
+    Gemini is explicitly told not to pass it to search_policy to avoid noise.
     """
     if profile:
         return (
             f"Question: {question}\n\n"
+            f"Note: A borrower profile is available. Use it only when calling "
+            f"calculate_dti or evaluate_risk tools. Do not pass it to search_policy.\n\n"
             f"Borrower Profile:\n{json.dumps(profile, indent=2)}"
         )
 
@@ -139,3 +140,22 @@ def _has_tool_calls(response) -> bool:
     Returns False when the model has produced a final text answer.
     """
     return bool(getattr(response, "tool_calls", None))
+
+
+def _extract_text(content) -> str:
+    """
+    Extract plain text from response content.
+    Handles both plain string and list of content blocks from Gemini.
+    This is needed because Gemini sometimes returns a list of typed blocks
+    like [{"type": "text", "text": "..."}] instead of a plain string.
+    """
+    if isinstance(content, str):
+        return content
+
+    if isinstance(content, list):
+        return " ".join(
+            block.get("text", "") for block in content
+            if isinstance(block, dict) and block.get("type") == "text"
+        ).strip()
+
+    return str(content)
