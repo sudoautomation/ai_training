@@ -1,7 +1,7 @@
 # api/ingest_routes.py
 # Exposes a single POST endpoint to upload and ingest a PDF file.
 # File is saved temporarily, ingested into the vector store, then cleaned up.
-# No business logic here. Delegates entirely to ingestion.py.
+# DB and general errors are mapped to friendly messages.
 
 import os
 import shutil
@@ -16,22 +16,27 @@ router = APIRouter(
     tags=["Ingestion"]
 )
 
+# Substrings used to detect DB connection failures
+DB_ERROR_SIGNALS = [
+    "connection refused",
+    "could not connect",
+    "psycopg",
+    "pgvector",
+    "operational error",
+    "database",
+]
+
 
 @router.post("/upload")
 async def upload_pdf(file: UploadFile = File(...)):
     """
     Accept a PDF upload and ingest it into the vector store.
-
-    The file is written to a temp directory, passed to ingest_pdf,
-    then deleted regardless of success or failure.
-
-    Access this via /docs in FastAPI's Swagger UI to upload manually.
+    Access via /docs in FastAPI Swagger UI to upload manually.
     """
 
     if not file.filename.endswith(".pdf"):
         raise HTTPException(status_code=400, detail="Only PDF files are supported.")
 
-    # Write the uploaded file to a temp path so ingest_pdf can read it from disk
     tmp_dir = tempfile.mkdtemp()
     tmp_path = os.path.join(tmp_dir, file.filename)
 
@@ -42,13 +47,23 @@ async def upload_pdf(file: UploadFile = File(...)):
         ingest_pdf(tmp_path)
 
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Ingestion failed: {str(e)}")
+        error_message = _classify_ingest_error(str(e).lower())
+        raise HTTPException(status_code=500, detail=error_message)
 
     finally:
-        # Always clean up the temp file even if ingestion fails
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     return {
         "status": "success",
         "message": f"{file.filename} ingested successfully."
     }
+
+
+def _classify_ingest_error(error_text: str) -> str:
+    """
+    Map a raw ingestion exception to a user-friendly message.
+    """
+    if any(signal in error_text for signal in DB_ERROR_SIGNALS):
+        return "Could not connect to the database. Please ensure the vector store is running."
+
+    return "Ingestion failed. Please check the file and try again."
