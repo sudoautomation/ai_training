@@ -3,7 +3,6 @@ from typing import Optional
 
 
 class BorrowerProfile(BaseModel):
-
     customer_id: Optional[str] = None
     age: Optional[int] = None
     monthly_income: Optional[float] = None
@@ -15,8 +14,5 @@ class BorrowerProfile(BaseModel):
 
 
 class LoanRequest(BaseModel):
-
     question: str
-    borrower_profile: Optional[
-        BorrowerProfile
-    ] = None
+    borrower_profile: Optional[BorrowerProfile] = None

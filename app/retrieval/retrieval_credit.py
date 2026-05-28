@@ -1,12 +1,11 @@
-from app.retrieval.search import detect_mode, fts_search, vector_search, hybrid_search
+from app.retrieval.search import detect_mode, fts_search, hybrid_search, vector_search
 
 
 def query_credit_document(query: str, k: int = 5) -> list[dict]:
-    """
-    Public entry point for Credit Risk FAQ retrieval.
+    """Public entry point for Credit Risk FAQ retrieval.
 
     Automatically selects the best retrieval mode:
-      - 'keyword' → RBI codes, acronyms, numeric IDs      → fts_search
+      - 'keyword' → RBI codes, acronyms, numeric IDs       → fts_search
       - 'hybrid'  → short natural-language queries         → hybrid_search (RRF)
       - 'vector'  → full conversational / semantic queries → vector_search
 

@@ -10,7 +10,6 @@ load_dotenv()
 
 
 def ingest_pdf(file_path: str):
-
     print("Ingestion Started")
 
     # 1. Load document
@@ -23,10 +22,10 @@ def ingest_pdf(file_path: str):
     # 3. Chunking
     chunks = split_documents(docs)
     print(f"Total chunks: {len(chunks)}")
- 
+
     # 4. create vector
     create_vector_store("hr_support_desk", pre_delete_collection=True)
-    
+
     # 5. store embeddings in vector db
     store_vector(chunks)
 
@@ -34,10 +33,8 @@ def ingest_pdf(file_path: str):
 
 
 if __name__ == "__main__":
+    ingest_pdf("data/Capstone_Project_3_Intelligent_Credit_Risk_Assessment_FAQ.pdf")
 
-    ingest_pdf(
-        "data/Capstone_Project_3_Intelligent_Credit_Risk_Assessment_FAQ.pdf"
-        # "data\HR_Support_Desk_KnowledgeBase.pdf"
-    )
+# Alternative path or commands for reference:
 # "data\HR_Support_Desk_KnowledgeBase.pdf"
 # $env:PYTHONPATH="."; uv run app/ingestion/ingestion.py
