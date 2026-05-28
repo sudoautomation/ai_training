@@ -1,24 +1,11 @@
+import streamlit as st
+
+
 def build_payload(query):
+    payload = {"question": query}
 
-    payload = {
-
-        "question":
-        query
-    }
-
-    profile = getattr(
-        __import__("streamlit")
-        .session_state,
-
-        "borrower_profile",
-
-        None
-    )
-
+    profile = st.session_state.get("borrower_profile", None)
     if profile:
-
-        payload[
-            "borrower_profile"
-        ] = profile
+        payload["borrower_profile"] = profile
 
     return payload
