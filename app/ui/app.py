@@ -42,7 +42,6 @@ if query:
             "role": "assistant",
             "content": result["answer"],
             "risk": result.get("risk"),
-            "citations": result.get("citations", []),
         })
 
     st.rerun()

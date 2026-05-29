@@ -1,4 +1,9 @@
-import re
+# retrieval/search.py
+# Implements three search functions: fts_search, vector_search, hybrid_search.
+# fts_search no longer runs the reranker since it is called internally by
+# hybrid_search which reranks the final fused results anyway.
+# Reranker only runs once per search call, at the end of each public function.
+
 import psycopg
 from psycopg.rows import dict_row
 from sentence_transformers import CrossEncoder
@@ -8,60 +13,25 @@ from app.retrieval.config import (
     COLLECTION_NAME,
     DEFAULT_K,
     HYBRID_VECTOR_WEIGHT,
-    HYBRID_BM25_WEIGHT,
+    HYBRID_FTS_WEIGHT,
     RERANKER_MODEL,
     get_vector_store,
 )
 
-# ── Cross-encoder re-ranker (loaded once at import time) ────────────────────
+# Cross-encoder reranker loaded once at import time
 _reranker = CrossEncoder(RERANKER_MODEL)
 
-# ── Keyword patterns: RBI circulars, acronyms, numeric IDs ──────────────────
-_KEYWORD_PATTERNS = [
-    r"[A-Z]{2,}-\d{4}-\w+",  # e.g. RBI-2023-XYZ
-    r"\b[A-Z]{2,5}\b",       # e.g. NPA, DTI, LTV, EMI
-    r"\d{6,}",               # long numeric IDs
-]
-_KEYWORD_RE = re.compile("|".join(_KEYWORD_PATTERNS))
 
-
-# ── Mode detection ───────────────────────────────────────────────────────────
-def detect_mode(query: str) -> str:
-    """Choose retrieval mode based on query structure.
-
-    - 'keyword' → isolated acronyms / RBI codes / numeric IDs only (≤ 3 words AND matches pattern)
-    - 'hybrid'  → short natural-language queries (≤ 3 words)
-    - 'vector'  → full conversational / semantic queries (> 3 words)
-
-    Priority: query length > keyword pattern (avoid routing long queries to FTS).
-    """
-    stripped = query.strip()
-    word_count = len(stripped.split())
-    has_keyword = bool(_KEYWORD_RE.search(stripped))
-
-    # Long queries use vector, regardless of acronyms
-    if word_count > 3:
-        return "vector"
-
-    # Short queries: use keyword only if pure acronym/code, else hybrid
-    if has_keyword:
-        return "keyword"
-
-    return "hybrid"
-
-
-# ── Metadata filter helper ───────────────────────────────────────────────────
 def _matches_filter(metadata: dict, filters: dict) -> bool:
-    """Return True if chunk metadata satisfies ALL provided filters.
-
-    Filter values can be a string or list — any overlap = match.
+    """
+    Return True if chunk metadata satisfies ALL provided filters.
+    Filter values can be a string or list. Any overlap is a match.
     Unrecognised filter keys are ignored gracefully.
     """
     for key, value in filters.items():
         chunk_val = metadata.get(key)
         if chunk_val is None:
             return False
-        # both sides normalised to lists for overlap check
         chunk_list = chunk_val if isinstance(chunk_val, list) else [chunk_val]
         filter_list = value if isinstance(value, list) else [value]
         if not any(v in chunk_list for v in filter_list):
@@ -69,17 +39,16 @@ def _matches_filter(metadata: dict, filters: dict) -> bool:
     return True
 
 
-# ── Re-ranker ────────────────────────────────────────────────────────────────
 def rerank(query: str, results: list[dict], k: int = DEFAULT_K) -> list[dict]:
-    """Cross-encoder re-ranking: score each (query, chunk) pair together,
-
-    then reorder by true relevance and return top-k.
+    """
+    Cross-encoder reranking: score each (query, chunk) pair together,
+    reorder by true relevance, and return top-k.
     """
     if not results:
         return results
 
     pairs = [(query, item["content"]) for item in results]
-    scores = _reranker.predict(pairs)  # float score per pair
+    scores = _reranker.predict(pairs)
 
     ranked = sorted(
         zip(scores, results),
@@ -89,16 +58,19 @@ def rerank(query: str, results: list[dict], k: int = DEFAULT_K) -> list[dict]:
     return [item for _, item in ranked[:k]]
 
 
-# ── Full-Text Search (BM25-like) ─────────────────────────────────────────────
 def fts_search(
     query: str,
     k: int = DEFAULT_K,
     filters: dict = None,
+    apply_rerank: bool = True,
 ) -> list[dict]:
-    """PostgreSQL full-text search against the credit_risk_faq collection.
-
+    """
+    PostgreSQL full-text search using ts_rank for keyword relevance scoring.
     Best for exact keyword matches: NPA, LTV, CIBIL codes, RBI circulars.
-    Optionally filters by metadata fields (loan_product, risk_factor, etc.).
+
+    apply_rerank is True when called directly as a tool.
+    apply_rerank is False when called internally by hybrid_search to avoid
+    double reranking since hybrid_search reranks the fused results itself.
     """
     sql = """
         SELECT
@@ -133,23 +105,23 @@ def fts_search(
     if filters:
         results = [r for r in results if _matches_filter(r["metadata"], filters)]
 
-    # Re-rank with cross-encoder before returning
-    results = rerank(query, results, k=k)
-    return results
+    # Only rerank when called directly as a standalone tool
+    if apply_rerank:
+        return rerank(query, results, k=k)
+
+    return results[:k]
 
 
-# ── Vector Search ────────────────────────────────────────────────────────────
 def vector_search(
     query: str,
     k: int = DEFAULT_K,
     filters: dict = None,
 ) -> list[dict]:
-    """Semantic similarity search via PGVector embeddings (cosine similarity).
-
-    Best for full conversational / policy reasoning queries.
-    Optionally filters by metadata fields post-retrieval.
     """
-    # fetch extra to allow for post-filter drop
+    Semantic similarity search via PGVector embeddings using cosine similarity.
+    Best for full conversational and policy reasoning queries.
+    Reranker runs once at the end.
+    """
     fetch_k = k * 2 if filters else k
     docs = get_vector_store().similarity_search(query, k=fetch_k)
 
@@ -161,26 +133,26 @@ def vector_search(
     if filters:
         results = [r for r in results if _matches_filter(r["metadata"], filters)]
 
-    # Re-rank with cross-encoder before returning
-    results = rerank(query, results, k=k)
-    return results
+    return rerank(query, results, k=k)
 
 
-# ── Hybrid Search (50/50 weighted RRF) ──────────────────────────────────────
 def hybrid_search(
     query: str,
     k: int = DEFAULT_K,
     filters: dict = None,
 ) -> list[dict]:
-    """Weighted Reciprocal Rank Fusion: 50% vector + 50% BM25/FTS.
-
-    Spec: combine 50% BM25 keyword + 50% vector similarity.
-    Optionally filters by metadata fields before fusion.
     """
-    fetch_k = k * 2  # fetch more to absorb filter drops
+    Weighted Reciprocal Rank Fusion combining 50% vector and 50% FTS results.
+    fts_search is called with apply_rerank=False to avoid double reranking.
+    Reranker runs once at the end on the fused results.
+    """
+    fetch_k = k * 1.5
 
     vector_docs = get_vector_store().similarity_search(query, k=fetch_k)
-    fts_docs = fts_search(query, k=fetch_k, filters=filters)
+
+    # apply_rerank=False avoids running the reranker inside fts_search
+    # since we rerank the fused results below
+    fts_docs = fts_search(query, k=fetch_k, filters=filters, apply_rerank=False)
 
     vector_results = [
         {"content": doc.page_content, "metadata": doc.metadata}
@@ -195,21 +167,20 @@ def hybrid_search(
     rrf_scores: dict[str, float] = {}
     chunk_map: dict[str, dict] = {}
 
-    # ── Vector side: weighted 50% ────────────────────────────────────────────
+    # Vector side weighted 50%
     for rank, item in enumerate(vector_results):
         key = item["content"][:120]
         rrf_scores[key] = rrf_scores.get(key, 0) + HYBRID_VECTOR_WEIGHT / (60 + rank + 1)
         chunk_map[key] = item
 
-    # ── FTS side: weighted 50% ───────────────────────────────────────────────
+    # FTS side weighted 50%
     for rank, item in enumerate(fts_docs):
         key = item["content"][:120]
-        rrf_scores[key] = rrf_scores.get(key, 0) + HYBRID_BM25_WEIGHT / (60 + rank + 1)
+        rrf_scores[key] = rrf_scores.get(key, 0) + HYBRID_FTS_WEIGHT / (60 + rank + 1)
         chunk_map[key] = item
 
     ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     hybrid_results = [chunk_map[key] for key, _ in ranked[:k]]
 
-    # Final re-rank with cross-encoder for best relevance
-    hybrid_results = rerank(query, hybrid_results, k=k)
-    return hybrid_results
+    # Single rerank on fused results
+    return rerank(query, hybrid_results, k=k)
