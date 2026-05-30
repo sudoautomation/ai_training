@@ -1,26 +1,19 @@
 # agents/tools.py
 # Defines all agent tools using LangChain @tool decorator.
-# Docstrings are intentionally concise to reduce token usage per call.
+# search_keyword removed as a tool since Gemini generates well-formed
+# queries that are better served by hybrid or semantic search.
+# fts_search still exists in search.py and is used internally by hybrid_search.
 
 from langchain_core.tools import tool
 
 from app.services.dti_service import calculate_dti as _calculate_dti
 from app.services.risk_service import evaluate_risk as _evaluate_risk
-from app.retrieval.search import fts_search, vector_search, hybrid_search
-
-
-@tool
-def search_keyword(query: str) -> str:
-    """Keyword search for acronyms and codes like LTV, NPA, EMI, RBI circulars. Pass short term only."""
-    results = fts_search(query)
-    if not results:
-        return "No relevant policy information found."
-    return _format_context(results)
+from app.retrieval.search import vector_search, hybrid_search
 
 
 @tool
 def search_semantic(query: str) -> str:
-    """Semantic search for conversational policy questions. Pass natural language query only."""
+    """Semantic search for broad policy questions with no specific terms. Example: how does loan approval work."""
     results = vector_search(query)
     if not results:
         return "No relevant policy information found."
@@ -29,7 +22,7 @@ def search_semantic(query: str) -> str:
 
 @tool
 def search_hybrid(query: str) -> str:
-    """Hybrid search for queries mixing specific terms with natural language. Pass query only."""
+    """Hybrid search when query contains specific loan terms like DTI, LTV, NPA, CIBIL, EMI, or product names. Example: what is DTI ratio, NPA classification rules."""
     results = hybrid_search(query)
     if not results:
         return "No relevant policy information found."
@@ -88,4 +81,5 @@ def _format_context(results: list[dict]) -> str:
     return "\n".join(context)
 
 
-TOOLS = [search_keyword, search_semantic, search_hybrid, assess_borrower]
+# 3 tools: 2 retrieval + 1 assessment
+TOOLS = [search_semantic, search_hybrid, assess_borrower]

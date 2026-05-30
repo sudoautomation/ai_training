@@ -35,7 +35,7 @@ if query:
     # If the result contains an error show it as a toast and do not append
     # a broken assistant message to the chat history
     if "error" in result:
-        st.toast(result["error"], icon="warning")
+        st.toast(result["error"], icon="⚠️")
 
     else:
         st.session_state.chat.append({

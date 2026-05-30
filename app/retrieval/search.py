@@ -1,11 +1,10 @@
 # retrieval/search.py
 # Implements three search functions: fts_search, vector_search, hybrid_search.
-# Raises DBConnectionError on any database connectivity failure so
-# loan_routes.py can catch it by type instead of string matching.
+# CrossEncoder reranker removed to reduce latency.
+# RRF fusion in hybrid_search provides sufficient ranking quality.
 
 import psycopg
 from psycopg.rows import dict_row
-from sentence_transformers import CrossEncoder
 
 from app.exceptions import DBConnectionError
 from app.retrieval.config import (
@@ -14,19 +13,14 @@ from app.retrieval.config import (
     DEFAULT_K,
     HYBRID_VECTOR_WEIGHT,
     HYBRID_FTS_WEIGHT,
-    RERANKER_MODEL,
     get_vector_store,
 )
-
-# Cross-encoder reranker loaded once at import time
-_reranker = CrossEncoder(RERANKER_MODEL)
 
 
 def _matches_filter(metadata: dict, filters: dict) -> bool:
     """
     Return True if chunk metadata satisfies ALL provided filters.
     Filter values can be a string or list. Any overlap is a match.
-    Unrecognised filter keys are ignored gracefully.
     """
     for key, value in filters.items():
         chunk_val = metadata.get(key)
@@ -39,36 +33,14 @@ def _matches_filter(metadata: dict, filters: dict) -> bool:
     return True
 
 
-def rerank(query: str, results: list[dict], k: int = DEFAULT_K) -> list[dict]:
-    """
-    Cross-encoder reranking: score each (query, chunk) pair together,
-    reorder by true relevance, and return top-k.
-    """
-    if not results:
-        return results
-
-    pairs = [(query, item["content"]) for item in results]
-    scores = _reranker.predict(pairs)
-
-    ranked = sorted(
-        zip(scores, results),
-        key=lambda x: x[0],
-        reverse=True,
-    )
-    return [item for _, item in ranked[:int(k)]]
-
-
 def fts_search(
     query: str,
     k: int = DEFAULT_K,
     filters: dict = None,
-    apply_rerank: bool = True,
 ) -> list[dict]:
     """
     PostgreSQL full-text search using ts_rank for keyword relevance scoring.
-    apply_rerank=False when called internally by hybrid_search to avoid
-    double reranking since hybrid_search reranks the fused results itself.
-    Raises DBConnectionError on connection failure.
+    Called internally by hybrid_search. Raises DBConnectionError on failure.
     """
     k = int(k)
 
@@ -109,9 +81,6 @@ def fts_search(
     if filters:
         results = [r for r in results if _matches_filter(r["metadata"], filters)]
 
-    if apply_rerank:
-        return rerank(query, results, k=k)
-
     return results[:k]
 
 
@@ -122,7 +91,7 @@ def vector_search(
 ) -> list[dict]:
     """
     Semantic similarity search via PGVector embeddings using cosine similarity.
-    Raises DBConnectionError on connection failure.
+    Raises DBConnectionError on failure.
     """
     k = int(k)
     fetch_k = k * 2 if filters else k
@@ -140,7 +109,7 @@ def vector_search(
     if filters:
         results = [r for r in results if _matches_filter(r["metadata"], filters)]
 
-    return rerank(query, results, k=k)
+    return results[:k]
 
 
 def hybrid_search(
@@ -150,8 +119,7 @@ def hybrid_search(
 ) -> list[dict]:
     """
     Weighted Reciprocal Rank Fusion combining 50% vector and 50% FTS results.
-    fts_search called with apply_rerank=False to avoid double reranking.
-    Reranker runs once on the fused results.
+    No reranker. RRF fusion provides the final ranking.
     Raises DBConnectionError if either search path fails.
     """
     k = int(k)
@@ -162,7 +130,7 @@ def hybrid_search(
     except Exception as e:
         raise DBConnectionError(f"Vector search failed: {str(e)}") from e
 
-    fts_docs = fts_search(query, k=fetch_k, filters=filters, apply_rerank=False)
+    fts_docs = fts_search(query, k=fetch_k, filters=filters)
 
     vector_results = [
         {"content": doc.page_content, "metadata": doc.metadata}
@@ -190,6 +158,5 @@ def hybrid_search(
         chunk_map[key] = item
 
     ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
-    hybrid_results = [chunk_map[key] for key, _ in ranked[:k]]
 
-    return rerank(query, hybrid_results, k=k)
+    return [chunk_map[key] for key, _ in ranked[:k]]

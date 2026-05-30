@@ -1,6 +1,6 @@
 # retrieval/config.py
 # Configuration for the retrieval pipeline.
-# k reduced from 7 to 5 to lower tokens sent back to Gemini per search call.
+# RERANKER_MODEL removed since CrossEncoder reranker was removed.
 
 import os
 from dotenv import load_dotenv
@@ -10,14 +10,12 @@ load_dotenv()
 
 COLLECTION_NAME = "hr_support_desk"
 
-# Reduced from 7 to 5 to lower token usage
+# k=5 keeps token usage low
 DEFAULT_K = 5
 
 # Hybrid weights: 50% FTS + 50% vector
 HYBRID_VECTOR_WEIGHT = 0.5
 HYBRID_FTS_WEIGHT = 0.5
-
-RERANKER_MODEL = "cross-encoder/ms-marco-MiniLM-L-6-v2"
 
 RAW_CONN = os.getenv("PG_CONNECTION_STRING", "").replace(
     "postgresql+psycopg2", "postgresql"
