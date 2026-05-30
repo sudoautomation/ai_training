@@ -1,28 +1,36 @@
 # agents/reasoning_agent.py
 # Drives the agentic loop using LangChain create_agent.
-# System prompt is intentionally lean to reduce tokens per round trip.
-# Tool docstrings handle tool selection guidance.
+# Raises AgentError on failure so loan_routes.py can catch by type.
 
 import json
 from dotenv import load_dotenv
 from langchain.agents import create_agent
 
 from app.agents.tools import TOOLS
+from app.exceptions import AgentError
 
 load_dotenv()
 
-# Lean system prompt. Tool docstrings already explain when to use each tool.
-# Sources instruction kept minimal but structured.
 SYSTEM_PROMPT = """
 You are a loan policy assistant for a financial institution.
-Use tools to answer accurately. Never fabricate policy numbers.
-Never pass borrower profile data to any search tool.
-For borrower assessment always use assess_borrower.
-End your answer with sources used as:
-Sources:
-- <filename> Page <number>
-Omit Sources section if no search tool was used.
-If asked who you are say: I am a loan policy assistant.
+
+Think step by step before calling any tool using this pattern:
+
+Thought: what does the question need, which tool is appropriate
+Action: call the tool with the right arguments
+Observation: read the result and decide if more tools are needed
+Thought: do I have enough to answer or do I need another tool
+Action: call another tool if needed or produce the final answer
+
+Rules:
+- Never fabricate policy numbers not found in tool results
+- Never pass borrower profile data to any search tool
+- For borrower assessment always use assess_borrower
+- End answer with sources if any search tool was used:
+  Sources:
+  - <filename> Page <number>
+- Omit Sources if no search tool was used
+- If asked who you are say: I am a loan policy assistant
 """
 
 _agent = create_agent(
@@ -52,7 +60,7 @@ def generate_answer(question: str, profile: dict | None) -> tuple[str, dict, dic
             ]
         })
     except Exception as e:
-        raise RuntimeError(f"Agent execution failed: {str(e)}")
+        raise AgentError(f"Agent execution failed: {str(e)}") from e
 
     answer = response["messages"][-1].text
     dti, risk = _extract_tool_outputs(response["messages"])
@@ -60,8 +68,6 @@ def generate_answer(question: str, profile: dict | None) -> tuple[str, dict, dic
     return answer, dti, risk
 
 
-# Fields assess_borrower actually uses. Everything else is stripped
-# before sending to Gemini to reduce input tokens.
 _PROFILE_FIELDS = {
     "monthly_income",
     "existing_emis",

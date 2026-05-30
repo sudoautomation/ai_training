@@ -1,13 +1,13 @@
 # retrieval/search.py
 # Implements three search functions: fts_search, vector_search, hybrid_search.
-# fts_search no longer runs the reranker since it is called internally by
-# hybrid_search which reranks the final fused results anyway.
-# Reranker only runs once per search call, at the end of each public function.
+# Raises DBConnectionError on any database connectivity failure so
+# loan_routes.py can catch it by type instead of string matching.
 
 import psycopg
 from psycopg.rows import dict_row
 from sentence_transformers import CrossEncoder
 
+from app.exceptions import DBConnectionError
 from app.retrieval.config import (
     RAW_CONN,
     COLLECTION_NAME,
@@ -55,7 +55,7 @@ def rerank(query: str, results: list[dict], k: int = DEFAULT_K) -> list[dict]:
         key=lambda x: x[0],
         reverse=True,
     )
-    return [item for _, item in ranked[:k]]
+    return [item for _, item in ranked[:int(k)]]
 
 
 def fts_search(
@@ -66,12 +66,12 @@ def fts_search(
 ) -> list[dict]:
     """
     PostgreSQL full-text search using ts_rank for keyword relevance scoring.
-    Best for exact keyword matches: NPA, LTV, CIBIL codes, RBI circulars.
-
-    apply_rerank is True when called directly as a tool.
-    apply_rerank is False when called internally by hybrid_search to avoid
+    apply_rerank=False when called internally by hybrid_search to avoid
     double reranking since hybrid_search reranks the fused results itself.
+    Raises DBConnectionError on connection failure.
     """
+    k = int(k)
+
     sql = """
         SELECT
             e.document   AS content,
@@ -88,10 +88,14 @@ def fts_search(
         ORDER BY fts_rank DESC
         LIMIT %(k)s;
     """
-    with psycopg.connect(RAW_CONN, row_factory=dict_row) as conn:
-        with conn.cursor() as cur:
-            cur.execute(sql, {"query": query, "collection": COLLECTION_NAME, "k": k * 2})
-            rows = cur.fetchall()
+
+    try:
+        with psycopg.connect(RAW_CONN, row_factory=dict_row) as conn:
+            with conn.cursor() as cur:
+                cur.execute(sql, {"query": query, "collection": COLLECTION_NAME, "k": k * 2})
+                rows = cur.fetchall()
+    except Exception as e:
+        raise DBConnectionError(f"FTS search failed: {str(e)}") from e
 
     results = [
         {
@@ -105,7 +109,6 @@ def fts_search(
     if filters:
         results = [r for r in results if _matches_filter(r["metadata"], filters)]
 
-    # Only rerank when called directly as a standalone tool
     if apply_rerank:
         return rerank(query, results, k=k)
 
@@ -119,11 +122,15 @@ def vector_search(
 ) -> list[dict]:
     """
     Semantic similarity search via PGVector embeddings using cosine similarity.
-    Best for full conversational and policy reasoning queries.
-    Reranker runs once at the end.
+    Raises DBConnectionError on connection failure.
     """
+    k = int(k)
     fetch_k = k * 2 if filters else k
-    docs = get_vector_store().similarity_search(query, k=fetch_k)
+
+    try:
+        docs = get_vector_store().similarity_search(query, k=fetch_k)
+    except Exception as e:
+        raise DBConnectionError(f"Vector search failed: {str(e)}") from e
 
     results = [
         {"content": doc.page_content, "metadata": doc.metadata}
@@ -143,15 +150,18 @@ def hybrid_search(
 ) -> list[dict]:
     """
     Weighted Reciprocal Rank Fusion combining 50% vector and 50% FTS results.
-    fts_search is called with apply_rerank=False to avoid double reranking.
-    Reranker runs once at the end on the fused results.
+    fts_search called with apply_rerank=False to avoid double reranking.
+    Reranker runs once on the fused results.
+    Raises DBConnectionError if either search path fails.
     """
-    fetch_k = k * 1.5
+    k = int(k)
+    fetch_k = k * 2
 
-    vector_docs = get_vector_store().similarity_search(query, k=fetch_k)
+    try:
+        vector_docs = get_vector_store().similarity_search(query, k=fetch_k)
+    except Exception as e:
+        raise DBConnectionError(f"Vector search failed: {str(e)}") from e
 
-    # apply_rerank=False avoids running the reranker inside fts_search
-    # since we rerank the fused results below
     fts_docs = fts_search(query, k=fetch_k, filters=filters, apply_rerank=False)
 
     vector_results = [
@@ -182,5 +192,4 @@ def hybrid_search(
     ranked = sorted(rrf_scores.items(), key=lambda x: x[1], reverse=True)
     hybrid_results = [chunk_map[key] for key, _ in ranked[:k]]
 
-    # Single rerank on fused results
     return rerank(query, hybrid_results, k=k)
